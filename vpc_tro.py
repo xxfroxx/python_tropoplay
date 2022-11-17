@@ -1,9 +1,4 @@
 #!/usr/bin/python
-# Converted from VPC_With_VPN_Connection.template located at:
-# http://aws.amazon.com/cloudformation/aws-cloudformation-templates
-
-# External file vars for image, ecr name and ecsRole  
-import varis
 
 import troposphere.elasticloadbalancingv2 as elb
 
