@@ -48,6 +48,7 @@ from troposphere.ecs import (
     PortMapping,
     Service,
     TaskDefinition,
+    LoadBalancer,
 
 )
 from troposphere.policies import CreationPolicy, ResourceSignal
@@ -63,15 +64,6 @@ t.set_description(
     """\
 Test for viaplay."""
 )
-
-t.add_resource(
-    Repository(
-        "MyRepository",
-        RepositoryName=varis.var_RepositoryName
-    )
-)
-
-
 
 ref_stack_id = Ref("AWS::StackId")
 
@@ -168,17 +160,20 @@ ApplicationElasticLB = t.add_resource(
             Name="ApplicationElasticLB",
             Scheme="internet-facing",
             Subnets=[Ref(subnetA),Ref(subnetB)],
+            SecurityGroups=[Ref("AlbSecurityGroup")]
         )
     )
 
 TargetGroupEcs = t.add_resource(
     elb.TargetGroup(
         "TargetGroupEcs",
+        DependsOn="ApplicationElasticLB",
         HealthCheckIntervalSeconds="30",
         HealthCheckProtocol="HTTP",
         HealthCheckTimeoutSeconds="10",
         HealthyThresholdCount="4",
         Matcher=elb.Matcher(HttpCode="200"),
+        TargetType="ip",
         Name="tg-fargate",
         Port="8080",
         Protocol="HTTP",
@@ -210,7 +205,7 @@ t.add_resource(
 
 
 ################
-# Security Group
+# Security Group Fargate
 ################
 
 fargateSecurityGroup = t.add_resource(
@@ -219,7 +214,25 @@ fargateSecurityGroup = t.add_resource(
         GroupDescription="Enable HTTP access via port 8080",
         SecurityGroupIngress=[
             SecurityGroupRule(
-                IpProtocol="tcp", FromPort="8080", ToPort="8080", CidrIp="0.0.0.0/0"
+                #IpProtocol="tcp", FromPort="8080", ToPort="8080", CidrIp="0.0.0.0/0"
+                IpProtocol="tcp", FromPort="8080", ToPort="8080", SourceSecurityGroupId=Ref("AlbSecurityGroup")
+            ),
+        ],
+        VpcId=Ref(VPCResource),
+    )
+)
+
+################
+# Security Group ALB
+################
+
+albSecurityGroup = t.add_resource(
+    SecurityGroup(
+        "AlbSecurityGroup",
+        GroupDescription="Enable access all protocols",
+        SecurityGroupIngress=[
+            SecurityGroupRule(
+                IpProtocol="tcp", FromPort="0", ToPort="65535", CidrIp="0.0.0.0/0"
             ),
         ],
         VpcId=Ref(VPCResource),
@@ -242,7 +255,7 @@ task_definition = t.add_resource(
         ExecutionRoleArn="arn:aws:iam::203919308041:role/ecsTaskExecutionRole",
         ContainerDefinitions=[
             ContainerDefinition(
-                Name="td_viaplay002",
+                Name="cont_viaplay",
                 Image="203919308041.dkr.ecr.eu-west-3.amazonaws.com/test-viaplay:latest",
                 Essential=True,
                 PortMappings=[PortMapping(ContainerPort=8080)],
@@ -258,11 +271,14 @@ service = t.add_resource(
         DesiredCount=1,
         TaskDefinition=Ref(task_definition),
         LaunchType="FARGATE",
-        LoadBalancers=[{ 
-            "ContainerName": "custom_node", 
-            "ContainerPort": 8080, 
-            "TargetGroupArn": Ref("TargetGroupEcs"),
-            }],
+        LoadBalancers=[
+            LoadBalancer(
+                ContainerName="cont_viaplay",
+                ContainerPort=8080,
+                TargetGroupArn=Ref("TargetGroupEcs"),
+                #LoadBalancerName=Ref("ApplicationElasticLB"),
+            ),
+        ],
         NetworkConfiguration=NetworkConfiguration(
             AwsvpcConfiguration=AwsvpcConfiguration(Subnets=[Ref("SubnetA"),Ref("SubnetB")],
             AssignPublicIp="ENABLED",
@@ -302,7 +318,7 @@ t.add_output(
         Output(
             "URL",
             Description="URL of the sample website",
-            Value=Join("", ["http://", GetAtt(ApplicationElasticLB, "DNSName")]),
+            Value=Join("", ["http://", GetAtt(ApplicationElasticLB, "DNSName"),":8080"]),
         ),
     ]
 )
